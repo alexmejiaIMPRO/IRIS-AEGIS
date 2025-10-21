@@ -44,7 +44,7 @@ export function DMTForm({ record }: DMTFormProps) {
     process_description: record?.process_description || "",
     analysis: record?.analysis || "",
     analysis_by: record?.analysis_by || "",
-    // Engineering fields
+    // Engineering fields - These are required by the backend
     disposition: record?.disposition || "",
     disposition_date: record?.disposition_date || "",
     engineer: record?.engineer || "",
@@ -86,6 +86,7 @@ export function DMTForm({ record }: DMTFormProps) {
 
     try {
       if (!saveAsSession) {
+        // Validation check for user-critical fields
         const requiredFields = ["title", "description", "category", "severity", "department"]
         const missingFields = requiredFields.filter((field) => !formData[field as keyof typeof formData])
 
@@ -100,7 +101,23 @@ export function DMTForm({ record }: DMTFormProps) {
         }
       }
 
-      const dataToSend = { ...formData, save_as_session: saveAsSession }
+      // FIX: Ensure all required fields by the Pydantic model are present and correctly typed (especially numbers).
+      const dataToSend = {
+        ...formData,
+        save_as_session: saveAsSession,
+        // CRITICAL FIX: Convert number fields to float (0 if empty string) to satisfy Pydantic/FastAPI
+        rework_hours: parseFloat(formData.rework_hours as string || "0"),
+        material_scrap_cost: parseFloat(formData.material_scrap_cost as string || "0"),
+        others_cost: parseFloat(formData.others_cost as string || "0"),
+        // Ensure all required string fields are safely included with an empty string default
+        disposition: formData.disposition || "",
+        disposition_date: formData.disposition_date || "",
+        engineer: formData.engineer || "",
+        failure_code: formData.failure_code || "",
+        responsible_dept: formData.responsible_dept || "",
+        engineering_remarks: formData.engineering_remarks || "",
+        repair_process: formData.repair_process || "",
+      }
 
       if (record) {
         await api.dmt.update(record.id, dataToSend)
@@ -120,7 +137,7 @@ export function DMTForm({ record }: DMTFormProps) {
       console.error("[v0] Error saving DMT:", error)
       toast({
         title: "Error",
-        description: `Failed to ${record ? "update" : "create"} DMT record`,
+        description: `Failed to ${record ? "update" : "create"} DMT record. Check console for details.`,
         variant: "destructive",
       })
     } finally {
@@ -164,7 +181,7 @@ export function DMTForm({ record }: DMTFormProps) {
       </div>
 
       <form onSubmit={(e) => handleSubmit(e, false)} className="space-y-6">
-        {/* General Information Section */}
+        {/* General Information Section (Old/Legacy) */}
         <div
           className={`bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border-2 border-blue-200 ${!isAdmin && canEdit ? "opacity-60" : ""}`}
         >
@@ -326,7 +343,7 @@ export function DMTForm({ record }: DMTFormProps) {
           </div>
         </div>
 
-        {/* Defect Description Section */}
+        {/* Defect Description Section (Old/Legacy) */}
         <div
           className={`bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-6 border-2 border-red-200 ${!isAdmin && canEdit ? "opacity-60" : ""}`}
         >
@@ -557,7 +574,7 @@ export function DMTForm({ record }: DMTFormProps) {
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={(e) => handleSubmit(e as any, true)}
+                  onClick={(e: any) => handleSubmit(e as any, true)}
                   disabled={loading}
                 >
                   {loading ? "Saving..." : "Save as Session"}

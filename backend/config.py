@@ -23,7 +23,7 @@ class Config:
     APP_DESCRIPTION: str = "Professional QMS with DMT tracking and user management"
 
     # Security
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+    SECRET_KEY: str = "your-secret-key-change-in-production" 
     SESSION_COOKIE_NAME: str = "qms_session"
     SESSION_MAX_AGE: int = 3600 * 24  # 24 hours
 

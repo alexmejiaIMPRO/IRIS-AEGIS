@@ -8,17 +8,20 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { isDatabaseInitialized } from "@/lib/client-db"
-import { seedDatabase } from "@/db/seed"
+// import { isDatabaseInitialized } from "@/lib/client-db"
+// import { seedDatabase } from "@/db/seed" // Commented out the missing module
 
 export default function LoginPage() {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-  const [initializing, setInitializing] = useState(true)
+  // Since the seeding logic is removed, we can simplify initialization
+  const [initializing, setInitializing] = useState(false) 
   const { login } = useAuth()
 
+  /*
+  // Commented out the useEffect hook containing the missing dependency logic
   useEffect(() => {
     const init = async () => {
       try {
@@ -35,6 +38,7 @@ export default function LoginPage() {
     }
     init()
   }, [])
+  */
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

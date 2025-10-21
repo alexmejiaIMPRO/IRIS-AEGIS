@@ -1,5 +1,5 @@
-// API client for communicating with Next.js backend
-const API_BASE_URL = "/api"
+// API client for communicating with FastAPI backend
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
 
 export class APIError extends Error {
   constructor(
@@ -16,7 +16,7 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}): Promise<Re
 
   const response = await fetch(url, {
     ...options,
-    credentials: "include", // Important for cookies
+    credentials: "include", // Important for cookies/sessions
     headers: {
       "Content-Type": "application/json",
       ...options.headers,
@@ -24,264 +24,200 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}): Promise<Re
   })
 
   if (!response.ok && response.status !== 422) {
-    const error = await response.text()
-    throw new APIError(response.status, error || response.statusText)
+    let errorText = response.statusText
+    
+    // --- CORRECTION: Try to parse JSON first, then fall back to text ---
+    try {
+      const errorJson = await response.json()
+      // Use the 'detail' field from FastAPI error response if available
+      errorText = errorJson.detail || JSON.stringify(errorJson)
+    } catch (e) {
+      // If JSON parsing fails, read the response as plain text
+      errorText = await response.text() || response.statusText
+    }
+    
+    throw new APIError(response.status, errorText)
   }
 
   return response
-}
-
-import { clientDb } from "./client-db"
-
-async function getCurrentUsername(): Promise<string> {
-  const sessionStr = localStorage.getItem("qmsystem-session")
-  if (!sessionStr) return "system"
-  const session = JSON.parse(sessionStr)
-  return session.username || "system"
 }
 
 export const api = {
   // Auth endpoints
   auth: {
     login: async (username: string, password: string) => {
-      const isValid = await clientDb.users.verifyPassword(username, password)
-
-      if (!isValid) {
-        throw new APIError(401, "Invalid credentials")
-      }
-
-      const user = await clientDb.users.findByUsername(username)
-
-      if (!user || !user.isActive) {
-        throw new APIError(401, "Invalid credentials")
-      }
-
-      // Store session in localStorage
-      const session = {
-        userId: user.id,
-        username: user.username,
-        role: user.role,
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
-      }
-      localStorage.setItem("qmsystem-session", JSON.stringify(session))
-
-      return { user }
+      const response = await fetchAPI("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      })
+      return await response.json()
     },
 
     logout: async () => {
-      localStorage.removeItem("qmsystem-session")
-      return { success: true }
+      const response = await fetchAPI("/api/auth/logout", {
+        method: "POST",
+      })
+      return await response.json()
     },
 
     getCurrentUser: async () => {
-      const sessionStr = localStorage.getItem("qmsystem-session")
-      if (!sessionStr) return null
-
-      const session = JSON.parse(sessionStr)
-      if (session.expiresAt < Date.now()) {
-        localStorage.removeItem("qmsystem-session")
-        return null
+      try {
+        const response = await fetchAPI("/api/auth/me")
+        return await response.json()
+      } catch (error) {
+        if (error instanceof APIError && error.status === 401) {
+          return null
+        }
+        throw error
       }
-
-      const user = await clientDb.users.findById(session.userId)
-      return user
     },
   },
 
   // Users endpoints
   users: {
     list: async () => {
-      return await clientDb.users.list()
+      const response = await fetchAPI("/api/users")
+      return await response.json()
     },
 
     create: async (userData: any) => {
-      return await clientDb.users.create(userData)
+      const response = await fetchAPI("/api/users", {
+        method: "POST",
+        body: JSON.stringify(userData),
+      })
+      return await response.json()
     },
 
     update: async (userId: number, userData: any) => {
-      return await clientDb.users.update(userId, userData)
+      const response = await fetchAPI(`/api/users/${userId}`, {
+        method: "PUT",
+        body: JSON.stringify(userData),
+      })
+      return await response.json()
     },
 
     delete: async (userId: number) => {
-      await clientDb.users.delete(userId)
-      return { success: true }
+      const response = await fetchAPI(`/api/users/${userId}`, {
+        method: "DELETE",
+      })
+      return await response.json()
     },
 
     activate: async (userId: number) => {
-      await clientDb.users.update(userId, { isActive: true })
-      return { success: true }
+      const response = await fetchAPI(`/api/users/${userId}/activate`, {
+        method: "POST",
+      })
+      return await response.json()
     },
   },
 
   // DMT endpoints
   dmt: {
     list: async (search?: string) => {
-      return await clientDb.dmt.list(search)
+      const params = search ? `?search=${encodeURIComponent(search)}` : ""
+      const response = await fetchAPI(`/api/dmt${params}`)
+      return await response.json()
     },
 
     get: async (id: number) => {
-      const record = await clientDb.dmt.findById(id)
-      return { record }
+      const response = await fetchAPI(`/api/dmt/${id}`)
+      return await response.json()
     },
 
     create: async (data: any) => {
-      const isSession = data.save_as_session === true
-      const { save_as_session, ...dmtData } = data
-
-      // Generate DMT number
-      const allRecords = await clientDb.dmt.list("", true)
-      const dmtNumber = `DMT-${String(allRecords.length + 1).padStart(5, "0")}`
-
-      const username = await getCurrentUsername()
-      return await clientDb.dmt.create(
-        {
-          ...dmtData,
-          dmtNumber,
-          isSession,
-        },
-        username,
-      )
+      const response = await fetchAPI("/api/dmt", {
+        method: "POST",
+        body: JSON.stringify(data),
+      })
+      return await response.json()
     },
 
     update: async (id: number, data: any) => {
-      const isSession = data.save_as_session === true
-      const { save_as_session, ...dmtData } = data
-
-      const username = await getCurrentUsername()
-      return await clientDb.dmt.update(
-        id,
-        {
-          ...dmtData,
-          isSession,
-        },
-        username,
-      )
+      const response = await fetchAPI(`/api/dmt/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      })
+      return await response.json()
     },
 
     delete: async (id: number) => {
-      const username = await getCurrentUsername()
-      await clientDb.dmt.delete(id, username)
-      return { success: true }
-    },
-
-    advanceWorkflow: async (id: number) => {
-      const record = await clientDb.dmt.findById(id)
-      if (!record) throw new Error("Record not found")
-
-      // Simple workflow advancement logic
-      const stages = ["Draft", "Review", "Approved", "Implemented"]
-      const currentIndex = stages.indexOf(record.workflowStage)
-      if (currentIndex < stages.length - 1) {
-        const username = await getCurrentUsername()
-        await clientDb.dmt.update(id, { workflowStage: stages[currentIndex + 1] }, username)
-      }
-      return { success: true }
+      const response = await fetchAPI(`/api/dmt/${id}`, {
+        method: "DELETE",
+      })
+      return await response.json()
     },
 
     close: async (id: number) => {
-      const username = await getCurrentUsername()
-      await clientDb.dmt.update(id, { status: "Closed" }, username)
-      return { success: true }
+      const response = await fetchAPI(`/api/dmt/${id}/close`, {
+        method: "POST",
+      })
+      return await response.json()
     },
 
     reopen: async (id: number) => {
-      const username = await getCurrentUsername()
-      await clientDb.dmt.update(id, { status: "Open" }, username)
-      return { success: true }
+      const response = await fetchAPI(`/api/dmt/${id}/reopen`, {
+        method: "POST",
+      })
+      return await response.json()
     },
 
-    export: async (format: "csv" | "excel") => {
-      const records = await clientDb.dmt.list()
-      // Simple CSV export
-      const csv = [
-        ["ID", "DMT Number", "Title", "Description", "Status", "Created At"].join(","),
-        ...records.map((r) => [r.id, r.dmtNumber, r.title, r.description, r.status, r.createdAt].join(",")),
-      ].join("\n")
-      return new Blob([csv], { type: "text/csv" })
+    export: async (format: "csv" | "json", days?: number) => {
+      const params = days ? `?days=${days}` : ""
+      const response = await fetchAPI(`/api/dmt/export/${format}${params}`)
+      return await response.blob()
     },
   },
 
   // Entities endpoints
   entities: {
     list: async (entity: string, search = "") => {
-      const items = await clientDb.entity.list(entity as any)
-      if (!search) return items
-
-      // Simple search filter
-      return items.filter((item: any) =>
-        Object.values(item).some((val) => String(val).toLowerCase().includes(search.toLowerCase())),
-      )
+      const params = search ? `?search=${encodeURIComponent(search)}` : ""
+      const response = await fetchAPI(`/api/entities/${entity}${params}`)
+      return await response.json()
     },
 
     create: async (entity: string, data: any) => {
-      const username = await getCurrentUsername()
-      return await clientDb.entity.create(entity as any, data, username)
+      const response = await fetchAPI(`/api/entities/${entity}`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      })
+      return await response.json()
+    },
+
+    update: async (entity: string, id: number, data: any) => {
+      const response = await fetchAPI(`/api/entities/${entity}/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      })
+      return await response.json()
     },
 
     delete: async (entity: string, id: number) => {
-      const username = await getCurrentUsername()
-      await clientDb.entity.delete(entity as any, id, username)
-      return { success: true }
+      const response = await fetchAPI(`/api/entities/${entity}/${id}`, {
+        method: "DELETE",
+      })
+      return await response.json()
     },
 
     export: async (entity: string, format: "csv" | "json") => {
-      const items = await clientDb.entity.list(entity as any)
-      if (format === "json") {
-        return new Blob([JSON.stringify(items, null, 2)], { type: "application/json" })
-      }
-      // CSV export
-      if (items.length === 0) return new Blob([""], { type: "text/csv" })
-
-      const headers = Object.keys(items[0]).join(",")
-      const rows = items.map((item: any) => Object.values(item).join(","))
-      const csv = [headers, ...rows].join("\n")
-      return new Blob([csv], { type: "text/csv" })
+      const response = await fetchAPI(`/api/entities/${entity}/export/${format}`)
+      return await response.blob()
     },
   },
 
   // Audit endpoints
   audit: {
     list: async () => {
-      const logs = await clientDb.audit.list(100)
-      return { logs }
+      const response = await fetchAPI("/api/audit")
+      return await response.json()
     },
   },
 
   // Dashboard stats
   dashboard: {
     getStats: async () => {
-      const dmtStats = await clientDb.dmt.getStats()
-      const allUsers = await clientDb.users.list()
-      const recentAudits = await clientDb.audit.list(10)
-      const recentReports = await clientDb.dmt.list()
-
-      return {
-        total_users: allUsers.length,
-        total_reports: dmtStats.total,
-        open_reports: dmtStats.open,
-        recent_audits: recentAudits.length,
-        recent_reports: recentReports.slice(0, 5).map((r) => [r.id, r.dmtNumber, r.title, r.status, r.createdAt]),
-        recent_users: allUsers.slice(0, 5).map((u) => [u.username, u.role]),
-      }
-    },
-  },
-
-  // General info
-  generalInfo: {
-    get: async () => {
-      // Return default general info
-      return {
-        company_name: "Quality Management System",
-        address: "",
-        phone: "",
-        email: "",
-      }
-    },
-
-    update: async (data: any) => {
-      // Store in localStorage
-      localStorage.setItem("qmsystem-general-info", JSON.stringify(data))
-      return data
+      const response = await fetchAPI("/api/dashboard/stats")
+      return await response.json()
     },
   },
 }

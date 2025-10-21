@@ -1,0 +1,746 @@
+<div class="bg-white rounded-xl shadow-xl p-8">
+    <div class="flex justify-between items-center mb-6">
+        <h2 class="text-3xl font-bold text-gray-800">
+            {% if record %}Edit DMT Report #{{ record.report_number }}{% else %}Create New DMT Report{% endif %}
+        </h2>
+        
+        {% if record %}
+        <div class="flex gap-2 items-center">
+            <span class="px-4 py-2 rounded-lg font-semibold text-sm
+                {% if record.workflow_status == 'draft' %}bg-gray-200 text-gray-700
+                {% elif record.workflow_status == 'supervisor_review' %}bg-blue-200 text-blue-700
+                {% elif record.workflow_status == 'manager_review' %}bg-yellow-200 text-yellow-700
+                {% elif record.workflow_status == 'engineer_review' %}bg-purple-200 text-purple-700
+                {% elif record.workflow_status == 'completed' %}bg-green-200 text-green-700
+                {% endif %}">
+                {{ record.workflow_status.replace('_', ' ').title() }}
+            </span>
+            
+            <span class="px-4 py-2 rounded-lg font-semibold text-sm
+                {% if record.status == 'open' %}bg-green-200 text-green-700
+                {% else %}bg-red-200 text-red-700{% endif %}">
+                {{ record.status.title() }}
+            </span>
+            
+            {% if record.is_session %}
+            <span class="px-4 py-2 rounded-lg font-semibold text-sm bg-orange-200 text-orange-700">
+                Session (Draft)
+            </span>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Added error message display -->
+    <div id="form-error-message" class="hidden mb-4 p-4 bg-red-100 border-2 border-red-400 text-red-700 rounded-lg">
+        <strong>Error:</strong> <span id="error-text"></span>
+    </div>
+    
+    <form id="dmt-form">
+        <input type="hidden" name="save_as_session" id="save_as_session" value="false">
+        
+        {% macro render_selector(name, label, options, selected='', disabled=False, required=True) %}
+        <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">
+                {{ label }} {% if required and not disabled %}<span class="text-red-600">*</span>{% endif %}
+            </label>
+            <select name="{{ name }}" {% if required and not disabled %}required{% endif %} class="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" {% if disabled %}disabled{% endif %}>
+                <option value="">-- Select --</option>
+                {% for opt in options %}
+                <option value="{{ opt.id }}" {% if opt.id == selected or opt.name == selected %}selected{% endif %}>{{ opt.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endmacro %}
+
+        {% macro render_input(name, label, value='', input_type='text', disabled=False, required=True) %}
+        <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">
+                {{ label }} {% if required and not disabled %}<span class="text-red-600">*</span>{% endif %}
+            </label>
+            <input type="{{ input_type }}" name="{{ name }}" value="{{ value }}" {% if required and not disabled %}required{% endif %}
+                   class="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                   {% if disabled %}disabled{% endif %}>
+        </div>
+        {% endmacro %}
+
+        {% macro render_employee_search(name, label, selected_id='', selected_name='', disabled=False, required=True) %}
+        <div class="relative">
+            <label class="block text-sm font-semibold text-gray-700 mb-1">
+                {{ label }} {% if required and not disabled %}<span class="text-red-600">*</span>{% endif %}
+            </label>
+            <input type="text" 
+                   id="{{ name }}_search" 
+                   placeholder="Search by name, ID, or employee number..."
+                   value="{{ selected_name }}"
+                   class="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                   autocomplete="off"
+                   {% if disabled %}disabled{% endif %}
+                   hx-get="/dmt/search/employees"
+                   hx-trigger="keyup changed delay:300ms"
+                   hx-target="#{{ name }}_results"
+                   hx-include="[id='{{ name }}_search']"
+                   hx-vals='js:{"q": document.getElementById("{{ name }}_search").value}'>
+            <input type="hidden" name="{{ name }}" id="{{ name }}_hidden" value="{{ selected_id }}" {% if required and not disabled %}required{% endif %}>
+            <div id="{{ name }}_results" 
+                 class="absolute z-50 w-full bg-white border-2 border-gray-300 rounded-lg mt-1 max-h-60 overflow-y-auto shadow-lg hidden">
+            </div>
+        </div>
+        {% endmacro %}
+
+        {% macro render_textarea(name, label, value='', disabled=False, required=True) %}
+        <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">
+                {{ label }} {% if required and not disabled %}<span class="text-red-600">*</span>{% endif %}
+            </label>
+            <textarea name="{{ name }}" rows="3" {% if required and not disabled %}required{% endif %}
+                      class="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      {% if disabled %}disabled{% endif %}>{{ value }}</textarea>
+        </div>
+        {% endmacro %}
+
+        {% macro render_checkbox(name, label, checked=False, disabled=False) %}
+        <div class="flex items-center">
+            <input type="checkbox" name="{{ name }}" id="{{ name }}" {% if checked %}checked{% endif %} {% if disabled %}disabled{% endif %}
+                   class="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500">
+            <label for="{{ name }}" class="ml-2 text-sm font-semibold text-gray-700">{{ label }}</label>
+        </div>
+        {% endmacro %}
+        
+        <div class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border-2 border-blue-200 {% if not permissions.general_info %}opacity-60{% endif %}">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">
+                📋 General Information <span class="text-red-600">*</span>
+                {% if not permissions.general_info and record.status != 'closed' %}
+                <span class="text-sm font-normal text-gray-600">(Supervisor Only)</span>
+                {% elif record.status == 'closed' %}
+                <span class="text-sm font-normal text-red-600">(Closed - Read Only)</span>
+                {% endif %}
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {{ render_selector('work_center', 'Work Center', selectors.workcenters, record.work_center if record else '', not permissions.general_info, True) }}
+                {{ render_selector('part_num', 'Part Number', selectors.partnumbers, record.part_num if record else '', not permissions.general_info, True) }}
+                {{ render_input('operation', 'Operation', record.operation if record else '', 'text', not permissions.general_info, True) }}
+                {{ render_employee_search('employee_name', 'Employee', record.employee_name if record else '', record.employee_name if record else '', not permissions.general_info, True) }}
+                {{ render_input('qty', 'Quantity', record.qty if record else '', 'text', not permissions.general_info, True) }}
+                {{ render_selector('customer', 'Customer', selectors.customers, record.customer if record else '', not permissions.general_info, True) }}
+                {{ render_input('shop_order', 'Shop Order', record.shop_order if record else '', 'text', not permissions.general_info, True) }}
+                {{ render_input('serial_number', 'Serial Number', record.serial_number if record else '', 'text', not permissions.general_info, True) }}
+                {{ render_selector('inspection_item', 'Inspection Item', selectors.inspection_items, record.inspection_item if record else '', not permissions.general_info, True) }}
+                {{ render_input('date', 'Date', record.date if record else '', 'date', not permissions.general_info, True) }}
+                {{ render_selector('prepared_by', 'Prepared By', selectors.prepared_by, record.prepared_by if record else '', not permissions.general_info, True) }}
+            </div>
+        </div>
+        
+        <div class="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-6 border-2 border-red-200 mt-6 {% if not permissions.defect_description %}opacity-60{% endif %}">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">
+                ⚠️ Defect Description <span class="text-red-600">*</span>
+                {% if not permissions.defect_description and record.status != 'closed' %}
+                <span class="text-sm font-normal text-gray-600">(Supervisor Only)</span>
+                {% elif record.status == 'closed' %}
+                <span class="text-sm font-normal text-red-600">(Closed - Read Only)</span>
+                {% endif %}
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {{ render_textarea('description', 'Description', record.description if record else '', not permissions.defect_description, True) }}
+                <div class="space-y-4">
+                    {{ render_selector('car_type', 'CAR Type', selectors.car_types, record.car_type if record else '', not permissions.defect_description, True) }}
+                    {{ render_input('car_cycle', 'CAR Cycle', record.car_cycle if record else '', 'text', not permissions.defect_description, True) }}
+                    {{ render_input('car_second_cycle_date', 'CAR Second Cycle Date', record.car_second_cycle_date if record else '', 'date', not permissions.defect_description, True) }}
+                </div>
+            </div>
+        </div>
+        
+        <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-xl p-6 border-2 border-yellow-200 mt-6 {% if not permissions.process_analysis %}opacity-60{% endif %}">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">
+                🔍 Process Analysis <span class="text-sm font-normal text-gray-600">(Optional)</span>
+                {% if not permissions.process_analysis and record.status != 'closed' %}
+                <span class="text-sm font-normal text-gray-600">(Manager/Engineer Only)</span>
+                {% elif record.status == 'closed' %}
+                <span class="text-sm font-normal text-red-600">(Closed - Read Only)</span>
+                {% endif %}
+            </h3>
+            <div class="grid grid-cols-1 gap-4">
+                {{ render_textarea('process_description', 'Process Description', record.process_description if record else '', not permissions.process_analysis, False) }}
+                {{ render_textarea('analysis', 'Analysis', record.analysis if record else '', not permissions.process_analysis, False) }}
+                {{ render_selector('analysis_by', 'Analysis By', selectors.employees, record.analysis_by if record else '', not permissions.process_analysis, False) }}
+            </div>
+        </div>
+        
+        <div class="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border-2 border-green-200 mt-6 {% if not permissions.engineering %}opacity-60{% endif %}">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">
+                ⚙️ Engineering <span class="text-red-600">*</span>
+                {% if not permissions.engineering and record.status != 'closed' %}
+                <span class="text-sm font-normal text-gray-600">(Engineer Only)</span>
+                {% elif record.status == 'closed' %}
+                <span class="text-sm font-normal text-red-600">(Closed - Read Only)</span>
+                {% endif %}
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {{ render_selector('disposition', 'Disposition', selectors.dispositions, record.disposition if record else '', not permissions.engineering, True) }}
+                {{ render_input('disposition_date', 'Disposition Date', record.disposition_date if record else '', 'date', not permissions.engineering, True) }}
+                {{ render_selector('engineer', 'Engineer', selectors.employees, record.engineer if record else '', not permissions.engineering, True) }}
+                {{ render_selector('failure_code', 'Failure Code', selectors.failure_codes, record.failure_code if record else '', not permissions.engineering, True) }}
+                {{ render_input('rework_hours', 'Rework Hours', record.rework_hours if record else '', 'text', not permissions.engineering, True) }}
+                {{ render_input('responsible_dept', 'Responsible Department', record.responsible_dept if record else '', 'text', not permissions.engineering, True) }}
+                {{ render_input('material_scrap_cost', 'Material Scrap Cost', record.material_scrap_cost if record else '', 'text', not permissions.engineering, True) }}
+                {{ render_input('others_cost', 'Others Cost', record.others_cost if record else '', 'text', not permissions.engineering, True) }}
+            </div>
+            <div class="grid grid-cols-1 gap-4 mt-4">
+                {{ render_textarea('engineering_remarks', 'Engineering Remarks', record.engineering_remarks if record else '', not permissions.engineering, True) }}
+                {{ render_textarea('repair_process', 'Repair Process', record.repair_process if record else '', not permissions.engineering, True) }}
+            </div>
+        </div>
+
+        <!-- NEW QUALITY SECTION -->
+        <div class="bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-xl p-6 border-2 border-cyan-200 mt-6 {% if not permissions.engineering %}opacity-60{% endif %}">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">
+                ✅ Quality <span class="text-sm font-normal text-gray-600">(Optional)</span>
+                {% if not permissions.engineering and record.status != 'closed' %}
+                <span class="text-sm font-normal text-gray-600">(Quality Department Only)</span>
+                {% elif record.status == 'closed' %}
+                <span class="text-sm font-normal text-red-600">(Closed - Read Only)</span>
+                {% endif %}
+            </h3>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                {{ render_input('disposition_approval_date', 'Disposition Approval Date', record.disposition_approval_date if record else '', 'date', not permissions.engineering, False) }}
+                {{ render_selector('disposition_approved_by', 'Disposition Approved By', selectors.employees, record.disposition_approved_by if record else '', not permissions.engineering, False) }}
+                {{ render_input('sdr_number', 'SDR Number', record.sdr_number if record else '', 'text', not permissions.engineering, False) }}
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                {{ render_input('dmt_approval_date', 'DMT Approval Date', record.dmt_approval_date if record else '', 'date', not permissions.engineering, False) }}
+                
+                {{ render_input('car_closed_date', 'CAR Closed Date', record.car_closed_date if record else '', 'date', not permissions.engineering, False) }}
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {{ render_checkbox('return_to_disposition', 'Return to Disposition', record.return_to_disposition if record else False, not permissions.engineering) }}
+                {{ render_checkbox('to_engineer', 'To Engineer', record.to_engineer if record else False, not permissions.engineering) }}
+            </div>
+        </div>
+
+        <div class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 border-2 border-purple-200 mt-6">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">📊 Assignment</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Assign To</label>
+                    <select name="assigned_to" class="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" {% if record and record.status == 'closed' %}disabled{% endif %}>
+                        <option value="">-- Select User --</option>
+                        {% for u in all_users %}
+                        {% if u.role in ['Admin', 'Inspector', 'Supervisor', 'Manager', 'Engineer'] or u.role == user.role %}
+                        <option value="{{ u.id }}" {% if record and record.assigned_to == u.id %}selected{% endif %}>{{ u.username }} ({{ u.role }})</option>
+                        {% endif %}
+                        {% endfor %}
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Workflow: Supervisor → Inspector/Superior → Engineer → Quality</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex gap-3 flex-wrap mt-6">
+            {% if record and record.status != 'closed' %}
+                <button type="button" onclick="submitForm(false)"
+                        id="save-session-btn"
+                        class="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold py-3 px-8 rounded-lg shadow-lg transition-all transform hover:scale-105">
+                    💾 Save as Session
+                </button>
+                
+                <button type="button" onclick="submitForm(true)"
+                        id="upload-btn"
+                        class="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-semibold py-3 px-8 rounded-lg shadow-lg transition-all transform hover:scale-105">
+                    ✓ Upload DMT
+                </button>
+                
+                {% if permissions.can_close %}
+                <button type="button"
+                        hx-post="/dmt/close/{{ record.id }}"
+                        hx-target="body"
+                        hx-swap="beforeend"
+                        hx-confirm="Are you sure you want to close this DMT? It cannot be edited after closing."
+                        class="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-semibold py-3 px-8 rounded-lg shadow-lg transition-all transform hover:scale-105">
+                    🔒 Close DMT
+                </button>
+                {% endif %}
+            {% elif not record %}
+                <button type="button" onclick="submitForm(false)"
+                        id="save-session-btn"
+                        class="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold py-3 px-8 rounded-lg shadow-lg transition-all transform hover:scale-105">
+                    💾 Save as Session
+                </button>
+                
+                <button type="button" onclick="submitForm(true)"
+                        id="upload-btn"
+                        class="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-semibold py-3 px-8 rounded-lg shadow-lg transition-all transform hover:scale-105">
+                    ✓ Create DMT
+                </button>
+            {% endif %}
+            
+            {% if record and record.status == 'closed' and user.role in ['Admin', 'Inspector'] %}
+                <button type="button"
+                        hx-post="/dmt/reopen/{{ record.id }}"
+                        hx-target="body"
+                        hx-swap="beforeend"
+                        hx-confirm="Are you sure you want to reopen this DMT?"
+                        class="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold py-3 px-8 rounded-lg shadow-lg transition-all transform hover:scale-105">
+                    🔓 Reopen DMT
+                </button>
+            {% endif %}
+            
+            {% if permissions.can_print %}
+                <button type="button"
+                        onclick="printDMT()"
+                        class="bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition">
+                    🖨️ DMT Report
+                </button>
+                
+                <button type="button"
+                        onclick="printCAR()"
+                        class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition">
+                    🖨️ CAR Report
+                </button>
+
+                <button type="button"
+                        onclick="printMRB()"
+                        class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition">
+                    🖨️ MRB Report
+                </button>
+            {% endif %}
+            
+            <button type="button"
+                    hx-get="/dmt/records" 
+                    hx-target="#main-content"
+                    class="bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition">
+                ✕ Cancel
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+function validateRequiredFields() {
+    const requiredFields = [
+        { name: 'work_center', label: 'Work Center', section: 'general_info' },
+        { name: 'part_num', label: 'Part Number', section: 'general_info' },
+        { name: 'operation', label: 'Operation', section: 'general_info' },
+        { name: 'employee_name', label: 'Employee', section: 'general_info' },
+        { name: 'qty', label: 'Quantity', section: 'general_info' },
+        { name: 'customer', label: 'Customer', section: 'general_info' },
+        { name: 'shop_order', label: 'Shop Order', section: 'general_info' },
+        { name: 'serial_number', label: 'Serial Number', section: 'general_info' },
+        { name: 'inspection_item', label: 'Inspection Item', section: 'general_info' },
+        { name: 'date', label: 'Date', section: 'general_info' },
+        { name: 'prepared_by', label: 'Prepared By', section: 'general_info' },
+        { name: 'description', label: 'Description', section: 'defect_description' },
+        { name: 'car_type', label: 'CAR Type', section: 'defect_description' },
+        { name: 'car_cycle', label: 'CAR Cycle', section: 'defect_description' },
+        { name: 'car_second_cycle_date', label: 'CAR Second Cycle Date', section: 'defect_description' },
+        { name: 'disposition', label: 'Disposition', section: 'engineering' },
+        { name: 'disposition_date', label: 'Disposition Date', section: 'engineering' },
+        { name: 'engineer', label: 'Engineer', section: 'engineering' },
+        { name: 'failure_code', label: 'Failure Code', section: 'engineering' },
+        { name: 'rework_hours', label: 'Rework Hours', section: 'engineering' },
+        { name: 'responsible_dept', label: 'Responsible Department', section: 'engineering' },
+        { name: 'material_scrap_cost', label: 'Material Scrap Cost', section: 'engineering' },
+        { name: 'others_cost', label: 'Others Cost', section: 'engineering' },
+        { name: 'engineering_remarks', label: 'Engineering Remarks', section: 'engineering' },
+        { name: 'repair_process', label: 'Repair Process', section: 'engineering' }
+    ];
+    
+    const missingFields = [];
+    const form = document.getElementById('dmt-form');
+    
+    for (const field of requiredFields) {
+        const input = form.querySelector(`[name="${field.name}"]`);
+        
+        // Only validate if field exists, is not disabled, and is empty
+        if (input && !input.disabled && !input.value.trim()) {
+            missingFields.push(field.label);
+        }
+    }
+    
+    return missingFields;
+}
+
+function showError(message) {
+    const errorDiv = document.getElementById('form-error-message');
+    const errorText = document.getElementById('error-text');
+    errorText.textContent = message;
+    errorDiv.classList.remove('hidden');
+    
+    // Scroll to top to show error
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    
+    // Hide error after 5 seconds
+    setTimeout(() => {
+        errorDiv.classList.add('hidden');
+    }, 5000);
+}
+
+function submitForm(isUpload) {
+    const form = document.getElementById('dmt-form');
+    const saveAsSessionInput = document.getElementById('save_as_session');
+    const errorDiv = document.getElementById('form-error-message');
+    
+    // Hide any previous errors
+    errorDiv.classList.add('hidden');
+    
+    // Only validate required fields when uploading (not for sessions)
+    if (isUpload) {
+        const missingFields = validateRequiredFields();
+        if (missingFields.length > 0) {
+            showError(`Please fill in all required fields: ${missingFields.join(', ')}`);
+            return;
+        }
+    }
+    
+    saveAsSessionInput.value = isUpload ? 'false' : 'true';
+    
+    const formData = new FormData(form);
+    
+    {% if record %}
+    const url = '/dmt/update/{{ record.id }}';
+    {% else %}
+    const url = '/dmt/create';
+    {% endif %}
+    
+    // Disable buttons to prevent double submission
+    const buttons = document.querySelectorAll('#save-session-btn, #upload-btn');
+    buttons.forEach(btn => {
+        btn.disabled = true;
+        btn.classList.add('opacity-50', 'cursor-not-allowed');
+        btn.innerHTML = btn.innerHTML.replace('💾', '⏳').replace('✓', '⏳');
+    });
+    
+    console.log('[v0] Submitting form to:', url, 'isUpload:', isUpload);
+    
+    fetch(url, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        console.log('[v0] Response status:', response.status);
+        
+        // Check if response is successful (2xx or 3xx status codes)
+        if (response.ok || response.status === 303 || response.status === 302) {
+            console.log('[v0] Save successful, redirecting to records list');
+            // Success - redirect to records list using HTMX
+            htmx.ajax('GET', '/dmt/records', {target: '#main-content', swap: 'innerHTML'});
+            return null; // Return null to indicate success
+        } else {
+            // Error response - get the error message
+            return response.text().then(text => {
+                throw new Error(text || 'Failed to save DMT');
+            });
+        }
+    })
+    .catch(error => {
+        // Only show error if there was an actual error (not null from success case)
+        if (error) {
+            console.error('[v0] Error submitting form:', error);
+            showError(error.message || 'An error occurred while saving the DMT');
+            
+            // Re-enable buttons
+            buttons.forEach(btn => {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                btn.innerHTML = btn.innerHTML.replace('⏳', btn.id === 'save-session-btn' ? '💾' : '✓');
+            });
+        }
+    });
+}
+
+document.addEventListener('htmx:afterSwap', function(event) {
+    if (event.detail.target.id === 'employee_name_results') {
+        const results = event.detail.target;
+        if (results.innerHTML.trim() !== '') {
+            results.classList.remove('hidden');
+            
+            // Add click handlers to all employee options
+            const options = results.querySelectorAll('.employee-option');
+            options.forEach(option => {
+                option.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const id = this.getAttribute('data-id');
+                    const name = this.getAttribute('data-name');
+                    selectEmployee(id, name);
+                });
+            });
+        }
+    }
+});
+
+document.addEventListener('click', function(event) {
+    const searchInput = document.getElementById('employee_name_search');
+    const resultsDiv = document.getElementById('employee_name_results');
+    
+    if (searchInput && resultsDiv && !searchInput.contains(event.target) && !resultsDiv.contains(event.target)) {
+        resultsDiv.classList.add('hidden');
+    }
+});
+
+const employeeSearchInput = document.getElementById('employee_name_search');
+if (employeeSearchInput) {
+    employeeSearchInput.addEventListener('focus', function() {
+        const resultsDiv = document.getElementById('employee_name_results');
+        if (resultsDiv && resultsDiv.innerHTML.trim() !== '') {
+            resultsDiv.classList.remove('hidden');
+        }
+    });
+}
+
+function selectEmployee(id, name) {
+    console.log('[v0] Selecting employee:', id, name);
+    document.getElementById('employee_name_search').value = name;
+    document.getElementById('employee_name_hidden').value = id;
+    document.getElementById('employee_name_results').classList.add('hidden');
+}
+
+function printDMT() {
+    document.body.classList.add('print-dmt');
+    document.body.classList.remove('print-car');
+    document.body.classList.remove('print-mrb');
+    window.print();
+    document.body.classList.remove('print-dmt');
+}
+
+function printCAR() {
+    document.body.classList.add('print-car');
+    document.body.classList.remove('print-dmt');
+    document.body.classList.remove('print-mrb');
+    window.print();
+    document.body.classList.remove('print-car');
+}
+
+function printMRB() {
+    document.body.classList.add('print-mrb');
+    document.body.classList.remove('print-dmt');
+    document.body.classList.remove('print-car');
+    window.print();
+    document.body.classList.remove('print-mrb');
+}
+</script>
+
+<style>
+/* DMT Print Styles */
+@media print {
+    body.print-dmt * { visibility: hidden; }
+    body.print-dmt #dmt-form, body.print-dmt #dmt-form * { visibility: visible; }
+    body.print-dmt button, body.print-dmt .no-print, body.print-dmt #form-error-message, body.print-dmt .flex.gap-3.flex-wrap,
+    body.print-dmt .px-4.py-2.rounded-lg.font-semibold { display: none !important; visibility: hidden !important; }
+    @page { size: letter portrait; margin: 0.4in; }
+    html, body { margin: 0 !important; padding: 0 !important; }
+    body.print-dmt .bg-white.rounded-xl.shadow-xl { position: absolute; top: 0; left: 0; width: 100%; box-shadow: none !important; padding: 0 !important; margin: 0 !important; }
+    body.print-dmt .flex.justify-between.items-center.mb-6 { text-align: center; display: block !important; margin-bottom: 8px !important; border-bottom: 2px solid #000; padding-bottom: 4px !important; }
+    body.print-dmt h2 { font-size: 16px !important; margin: 0 !important; font-weight: bold !important; text-align: center !important; }
+    body.print-dmt h3 { display: none !important; }
+    body.print-dmt .bg-gradient-to-br { padding: 0 !important; margin: 0 !important; border: none !important; background: white !important; display: block !important; }
+    body.print-dmt .bg-gradient-to-br.from-blue-50 { margin-bottom: 4px !important; }
+    body.print-dmt .bg-gradient-to-br.from-blue-50 .grid { display: grid !important; grid-template-columns: repeat(4, 1fr) !important; gap: 0 !important; border: 2px solid #000; }
+    body.print-dmt .bg-gradient-to-br.from-blue-50 .grid > div { border: 1px solid #000; padding: 2px 4px !important; margin: 0 !important; }
+    body.print-dmt .bg-gradient-to-br.from-red-50 { margin-bottom: 4px !important; }
+    body.print-dmt .bg-gradient-to-br.from-red-50 .grid { display: grid !important; grid-template-columns: 1fr !important; gap: 0 !important; border: 2px solid #000; }
+    body.print-dmt .bg-gradient-to-br.from-red-50 .grid > div { border: 1px solid #000; padding: 2px 4px !important; margin: 0 !important; min-height: 50px; }
+    body.print-dmt .bg-gradient-to-br.from-red-50 .space-y-4 { display: grid !important; grid-template-columns: repeat(3, 1fr) !important; gap: 0 !important; border-top: 1px solid #000; }
+    body.print-dmt .bg-gradient-to-br.from-red-50 .space-y-4 > div { border: 1px solid #000; padding: 2px 4px !important; }
+    body.print-dmt .bg-gradient-to-br.from-yellow-50 { margin-bottom: 4px !important; }
+    body.print-dmt .bg-gradient-to-br.from-yellow-50 .grid { display: grid !important; grid-template-columns: 1fr !important; gap: 0 !important; border: 2px solid #000; }
+    body.print-dmt .bg-gradient-to-br.from-yellow-50 .grid > div,
+    body.print-dmt .bg-gradient-to-br.from-yellow-50 .grid > textarea { border: 1px solid #000; padding: 2px 4px !important; margin: 0 !important; min-height: 40px; }
+    body.print-dmt .bg-gradient-to-br.from-green-50 { margin-bottom: 4px !important; }
+    body.print-dmt .bg-gradient-to-br.from-green-50 > .grid:first-of-type { display: grid !important; grid-template-columns: repeat(4, 1fr) !important; gap: 0 !important; border: 2px solid #000; }
+    body.print-dmt .bg-gradient-to-br.from-green-50 > .grid:first-of-type > div { border: 1px solid #000; padding: 2px 4px !important; margin: 0 !important; }
+    body.print-dmt .bg-gradient-to-br.from-green-50 > .grid:last-of-type { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 0 !important; border: 2px solid #000; border-top: none; }
+    body.print-dmt .bg-gradient-to-br.from-green-50 > .grid:last-of-type > div { border: 1px solid #000; padding: 2px 4px !important; margin: 0 !important; min-height: 50px; }
+    body.print-dmt .bg-gradient-to-br.from-cyan-50 { margin-bottom: 4px !important; }
+    body.print-dmt .bg-gradient-to-br.from-cyan-50 .grid { display: grid !important; grid-template-columns: repeat(3, 1fr) !important; gap: 0 !important; border: 2px solid #000; }
+    body.print-dmt .bg-gradient-to-br.from-cyan-50 .grid > div { border: 1px solid #000; padding: 2px 4px !important; margin: 0 !important; }
+    body.print-dmt .bg-gradient-to-br.from-purple-50 { display: none !important; }
+    body.print-dmt #dmt-form::after { content: ""; display: block; margin-top: 15px; border: 2px solid #000; padding: 8px; height: 60px; position: relative; }
+    body.print-dmt body::after { content: "Engineer Sign: ________________     Quality Sign: ________________"; display: block; position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: bold; width: 90%; text-align: center; visibility: visible; }
+    body.print-dmt [name="work_center"], body.print-dmt [name="work_center"] + *, body.print-dmt label[for="work_center"], body.print-dmt div:has(> [name="work_center"]), body.print-dmt div:has(> label:contains("Work Center")), body.print-dmt div:has(> select[name="work_center"]) { display: none !important; visibility: hidden !important; }
+    body.print-dmt [name="process_description"], body.print-dmt div:has(> [name="process_description"]), body.print-dmt div:has(> textarea[name="process_description"]) { display: none !important; visibility: hidden !important; }
+    body.print-dmt [name="failure_code"], body.print-dmt div:has(> [name="failure_code"]), body.print-dmt div:has(> select[name="failure_code"]) { display: none !important; visibility: hidden !important; }
+    body.print-dmt label { font-size: 8px !important; font-weight: bold !important; margin-bottom: 1px !important; display: block !important; line-height: 1.2 !important; }
+    body.print-dmt input, body.print-dmt select { font-size: 9px !important; padding: 1px 2px !important; border: none !important; border-bottom: 1px solid #333 !important; width: 100% !important; height: 16px !important; background: transparent !important; }
+    body.print-dmt textarea { font-size: 9px !important; padding: 2px !important; border: none !important; width: 100% !important; min-height: 35px !important; background: transparent !important; resize: none !important; }
+    body.print-dmt input[type="checkbox"] { width: 15px !important; height: 15px !important; }
+    body.print-dmt p, body.print-dmt span.text-sm, body.print-dmt span.text-xs { display: none !important; }
+    body.print-dmt #dmt-form { transform: scale(0.95); transform-origin: top center; width: 105.26%; margin-left: -2.63%; }
+}
+
+/* CAR Print Styles */
+@media print {
+    body.print-car * { visibility: hidden; }
+    body.print-car #dmt-form { visibility: visible; position: absolute; top: 0; left: 0; width: 100%; }
+    body.print-car button, body.print-car #form-error-message, body.print-car .flex.gap-3.flex-wrap,
+    body.print-car .px-4.py-2.rounded-lg.font-semibold { display: none !important; }
+    
+    /* Hide sections not needed for CAR */
+    body.print-car .bg-gradient-to-br.from-blue-50,
+    body.print-car .bg-gradient-to-br.from-yellow-50,
+    body.print-car .bg-gradient-to-br.from-green-50,
+    body.print-car .bg-gradient-to-br.from-purple-50 { display: none !important; }
+    
+    /* Show only CAR-relevant sections */
+    body.print-car .bg-white.rounded-xl.shadow-xl { 
+        box-shadow: none !important; 
+        padding: 20px !important; 
+        background: white !important;
+    }
+    
+    body.print-car h2 {
+        font-size: 18px !important;
+        font-weight: bold !important;
+        text-align: center !important;
+        margin-bottom: 20px !important;
+        border-bottom: 3px solid #000 !important;
+        padding-bottom: 10px !important;
+    }
+    
+    body.print-car h2::before {
+        content: "Corrective Action Request" !important;
+        display: block !important;
+        font-size: 20px !important;
+        margin-bottom: 5px !important;
+    }
+    
+    body.print-car h3 {
+        font-size: 11px !important;
+        font-weight: bold !important;
+        background: #333 !important;
+        color: white !important;
+        padding: 4px 8px !important;
+        margin: 10px 0 5px 0 !important;
+        display: block !important;
+        text-transform: uppercase !important;
+    }
+    
+    /* CAR Header Info */
+    body.print-car .flex.justify-between.items-center.mb-6 {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr 1fr !important;
+        gap: 10px !important;
+        border: 2px solid #000 !important;
+        padding: 10px !important;
+        margin-bottom: 10px !important;
+        background: #f0f0f0 !important;
+    }
+    
+    /* Defect Description Section for CAR */
+    body.print-car .bg-gradient-to-br.from-red-50 {
+        display: block !important;
+        visibility: visible !important;
+        border: 2px solid #000 !important;
+        padding: 10px !important;
+        margin-bottom: 10px !important;
+        background: white !important;
+    }
+    
+    body.print-car .bg-gradient-to-br.from-red-50 h3::before {
+        content: "DEFECT DESCRIPTION / Descripción del Defecto" !important;
+    }
+    
+    body.print-car .bg-gradient-to-br.from-red-50 .grid,
+    body.print-car .bg-gradient-to-br.from-red-50 .space-y-4 {
+        display: block !important;
+        border: none !important;
+    }
+    
+    body.print-car .bg-gradient-to-br.from-red-50 textarea {
+        width: 100% !important;
+        min-height: 80px !important;
+        border: 1px solid #333 !important;
+        padding: 5px !important;
+        font-size: 10px !important;
+    }
+    
+    /* Quality Section for CAR */
+    body.print-car .bg-gradient-to-br.from-cyan-50 {
+        display: block !important;
+        visibility: visible !important;
+        border: 2px solid #000 !important;
+        padding: 10px !important;
+        background: white !important;
+    }
+    
+    body.print-car .bg-gradient-to-br.from-cyan-50 .grid {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr 1fr !important;
+        gap: 10px !important;
+        border: none !important;
+    }
+    
+    body.print-car .bg-gradient-to-br.from-cyan-50 .grid > div {
+        border: 1px solid #333 !important;
+        padding: 5px !important;
+    }
+    
+    /* CAR Form specific fields */
+    body.print-car label {
+        font-size: 9px !important;
+        font-weight: bold !important;
+        display: block !important;
+        margin-bottom: 2px !important;
+        text-transform: uppercase !important;
+    }
+    
+    body.print-car input,
+    body.print-car select {
+        font-size: 10px !important;
+        border: none !important;
+        border-bottom: 1px solid #333 !important;
+        width: 100% !important;
+        padding: 2px !important;
+        background: transparent !important;
+    }
+    
+    body.print-car input[type="checkbox"] {
+        width: 15px !important;
+        height: 15px !important;
+        margin-right: 5px !important;
+    }
+    
+    /* Add CAR specific sections */
+    body.print-car #dmt-form::after {
+        content: "" !important;
+        display: block !important;
+        margin-top: 20px !important;
+        padding: 15px !important;
+        border: 2px solid #000 !important;
+        min-height: 100px !important;
+    }
+    
+    body.print-car #dmt-form::before {
+        content: "ROOT CAUSE / Causa Raíz:__________________________________________\A\A IMMEDIATE CORRECTIVE ACTION / Acción Correctiva Inmediata:__________________________________________\A\A PREVENTIVE ACTION / Medidas Preventivas:__________________________________________\A\A QUALITY FOLLOWUP / Seguimiento de Calidad:__________________________________________" !important;
+        display: block !important;
+        white-space: pre-wrap !important;
+        border: 2px solid #000 !important;
+        padding: 10px !important;
+        margin: 15px 0 !important;
+        font-size: 10px !important;
+        line-height: 2.5 !important;
+        visibility: visible !important;
+    }
+    
+    /* Footer with signatures */
+    body.print-car body::after {
+        content: "Facilitator: ________________  Date: ________  Signature: ________________\A\AReviewed by Issuer/ME: ________________  Date: ________  ☐ Satisfactory  ☐ Unsatisfactory\A\AAccepted by QM/QE: ________________  Date: ________  Close CAR Date: ________\A\AForm No.F19.00-09" !important;
+        display: block !important;
+        position: absolute !important;
+        bottom: 20px !important;
+        left: 20px !important;
+        right: 20px !important;
+        font-size: 9px !important;
+        font-weight: bold !important;
+        white-space: pre-wrap !important;
+        line-height: 1.8 !important;
+        visibility: visible !important;
+        border-top: 2px solid #000 !important;
+        padding-top: 10px !important;
+    }
+    
+    body.print-car p, body.print-car span.text-sm, body.print-car span.text-xs { display: none !important; }
+}
+</style>
